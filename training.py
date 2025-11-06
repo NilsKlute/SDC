@@ -96,7 +96,7 @@ def train(data_folder, trained_network_file, args):
                         # ------------------ training/validation loop ------------------ #
 
                         for epoch in range(nr_epochs):
-                            if early_stopping_counter < 10:
+                            if early_stopping_counter < 20:
 
 
                                 #train epoch
@@ -182,8 +182,8 @@ def train(data_folder, trained_network_file, args):
                         #plotting the training and validation loss and saving the figure
                         train_losses = [x[0] for x in train_val_loss_per_epoch]
                         val_losses = [x[1] for x in train_val_loss_per_epoch]
-                        plt.plot(range(1, nr_epochs + 1), train_losses, label='Training Loss')
-                        plt.plot(range(1, nr_epochs + 1), val_losses, label='Validation Loss')
+                        plt.plot(range(1, best_epoch + 1), train_losses, label='Training Loss')
+                        plt.plot(range(1, best_epoch + 1), val_losses, label='Validation Loss')
                         plt.xlabel('Epochs')
                         plt.ylabel('Loss')
                         plt.title('Training and Validation Loss over Epochs')
