@@ -54,7 +54,7 @@ def train(data_folder, trained_network_file, args):
                     for gamma in gamma_params:
                         
                         #----- create model folder using hyperparameter values -----#
-                        model_folder = f"models/hyperconfig_dataset:{dataset_size}_bs:{batch_size}_conv_n:{nr_conv_layers}_lin_n:{nr_linear_layers}_aug={data_augmentation}_drop={dropout}_epochs:{nr_epochs}_lr:{lr}_gamma:{gamma}"
+                        model_folder = f"models/hyperconfig_dataset:{dataset_size}_bs:{batch_size}_conv_n:{nr_conv_layers}_lin_n:{nr_linear_layers}_aug={data_augmentation}_drop={dropout}_epochs:{args.nr_epochs}_lr:{lr}_gamma:{gamma}"
                         if not os.path.exists(model_folder):
                             os.makedirs(model_folder)
                         trained_network_file = os.path.join(model_folder, trained_network_file)
@@ -77,7 +77,8 @@ def train(data_folder, trained_network_file, args):
                         print("Number of training samples: ", len(train_batches))
                         print("Number of validation samples: ", len(val_batches))
 
-                        # setting device on GPU if available, else CPU
+
+                        #----- setting device on GPU if available, else CPU -------#
                         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
                         infer_action.to(device)
 
@@ -86,7 +87,7 @@ def train(data_folder, trained_network_file, args):
                         start_time = time.time()
                         train_val_loss_per_epoch = [] # to store train/val loss for each epoch
 
-                        # initialize early stopping parameters
+                        #----- initialize early stopping parameters ------#
                         best_epoch = 0
                         early_stopping_counter = 0
                         min_val_loss = float('inf')
