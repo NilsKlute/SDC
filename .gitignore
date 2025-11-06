@@ -27,6 +27,8 @@ agent.pth
 uniques.out
 data.zip
 new_data.zip
+test_data/
+models/
 # -------------------------------
 # System / editor files
 # -------------------------------

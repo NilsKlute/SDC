@@ -3,6 +3,8 @@ import torch.nn as nn
 import torchvision
 import random
 import time
+import matplotlib.pyplot as plt
+import os
 from network import ClassificationNetwork
 from demonstrations import load_demonstrations
 # The flag below controls whether to allow TF32 on matmul. This flag defaults to True.
@@ -10,13 +12,28 @@ torch.backends.cuda.matmul.allow_tf32 = False
 # The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
 torch.backends.cudnn.allow_tf32 = False
 
+# SPECIFY HYPERPARAMETERS HERE   
+nr_conv_layers = 3
+nr_linear_layers = 2
+data_augmentation = False
+use_dropout = True
+# These cofigurations will be used for grid search
+dropout_params = [0.2]
+lr_params = [1e-3]
+batchsize_params = [256]
+gamma_params = [0.5]
+
+if not use_dropout:
+    dropout_params = [0.0]
+
+dataset_prop_params = [1] # specify proportions to use for training here (e.g., [0.1, 0.5, 1] for 10%, 50%, and 100% of the dataset)
+
 def train(data_folder, trained_network_file, args):
     """
     Function for training the network.
     """
-    infer_action = ClassificationNetwork()
-    optimizer = torch.optim.Adam(infer_action.parameters(), lr=args.lr)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.5)
+    # initialize auxiliary network for processing images and inferring actions
+    infer_action = ClassificationNetwork() 
 
     #Loss function
     loss_function = nn.CrossEntropyLoss()
@@ -25,49 +42,148 @@ def train(data_folder, trained_network_file, args):
     observations = [torch.Tensor(observation) for observation in observations]
     actions = [torch.Tensor(action) for action in actions]
 
-    batches = [batch for batch in zip(observations,
+    all_batches = [batch for batch in zip(observations,
                                       infer_action.actions_to_classes(actions))]
+    random.shuffle(all_batches)
+    dataset_size = len(all_batches)
 
-    # setting device on GPU if available, else CPU
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    infer_action.to(device)
+    for dropout in dropout_params:
+        for lr in lr_params:
+            for batch_size in batchsize_params:
+                for dataset_prop in dataset_prop_params:
+                    for gamma in gamma_params:
+                        print(f"Training with dropout={dropout}, lr={lr}, batch_size={batch_size}, dataset_size={dataset_subset_size}, gamma={gamma}")
 
-    nr_epochs = args.nr_epochs
-    batch_size = args.batch_size
-    start_time = time.time()
+                        #----- create model folder using hyperparameter values -----#
+                        model_folder = f"models/hyperconfig_dataset:{dataset_size}_bs:{batch_size}_conv_n:{nr_conv_layers}_lin_n:{nr_linear_layers}_aug={data_augmentation}_drop={dropout}_epochs:{nr_epochs}_lr:{lr}_gamma:{gamma}"
+                        if not os.path.exists(model_folder):
+                            os.makedirs(model_folder)
+                        trained_network_file = os.path.join(model_folder, trained_network_file)
 
-    for epoch in range(nr_epochs):
-        random.shuffle(batches)
 
-        total_loss = 0
-        batch_in = []
-        batch_gt = []
-        for batch_idx, batch in enumerate(batches):
-            batch_in.append(batch[0].to(device))
-            batch_gt.append(batch[1].to(device))
+                        #-----  initialize network for training -----#
+                        infer_action = ClassificationNetwork(dropout)
+                        optimizer = torch.optim.Adam(infer_action.parameters(), lr=lr)
+                        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=gamma)
 
-            if (batch_idx + 1) % batch_size == 0 or batch_idx == len(batches) - 1:
-                batch_in = torch.reshape(torch.cat(batch_in, dim=0),
-                                         (-1, 96, 96, 3))
 
-                batch_gt = torch.reshape(torch.cat(batch_gt, dim=0), (-1, )).to(device)
-                batch_out = infer_action(batch_in)
-                loss = loss_function(batch_out, batch_gt)
+                        #------- split training and validation data -------#
+                        dataset_subset_size = int(dataset_prop * dataset_size)
+                        batches = all_batches[:dataset_subset_size]
+                        train_split_n = int(0.9 * len(batches))
+                        train_batches = batches[:train_split_n]
+                        print("Number of training samples: ", len(train_batches))
+                        val_batches = batches[train_split_n:]
+                        print("Number of validation samples: ", len(val_batches))
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-                total_loss += loss
+                        # setting device on GPU if available, else CPU
+                        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                        infer_action.to(device)
 
-                batch_in = []
-                batch_gt = []
 
-        lr_scheduler.step()
+                        nr_epochs = args.nr_epochs
+                        start_time = time.time()
+                        train_val_loss_per_epoch = [] # to store train/val loss for each epoch
 
-        time_per_epoch = (time.time() - start_time) / (epoch + 1)
-        time_left = (1.0 * time_per_epoch) * (nr_epochs - 1 - epoch)
-        print("Epoch %5d\t[Train]\tloss: %.6f \tETA: +%fs" % (
-            epoch + 1, total_loss, time_left))
+                        # initialize early stopping parameters
+                        best_epoch = 0
+                        early_stopping_counter = 0
+                        min_val_loss = float('inf')
 
-    torch.save(infer_action, trained_network_file)
+
+                        # ------------------ training/validation loop ------------------ #
+
+                        for epoch in range(nr_epochs):
+                            if early_stopping_counter < 10:
+
+
+                                #train epoch
+                                random.shuffle(train_batches)
+                                train_loss = 0
+                                batch_in = []
+                                batch_gt = []
+                                optimizer_stepped = False
+                                for batch_idx, batch in enumerate(train_batches):
+                                    batch_in.append(batch[0].to(device))
+                                    batch_gt.append(batch[1].to(device))
+
+                                    if (batch_idx + 1) % batch_size == 0 or batch_idx == len(batches) - 1:
+                                        batch_in = torch.reshape(torch.cat(batch_in, dim=0),
+                                                                (-1, 96, 96, 3))
+
+                                        batch_gt = torch.reshape(torch.cat(batch_gt, dim=0), (-1, )).to(device)
+                                        batch_out = infer_action(batch_in)
+                                        loss = loss_function(batch_out, batch_gt)
+
+                                        optimizer.zero_grad()
+                                        loss.backward()
+                                        optimizer.step()
+                                        optimizer_stepped = True
+                                        
+                                        train_loss += loss.detach().cpu().item()
+
+                                        batch_in = []
+                                        batch_gt = []
+                                
+                                if optimizer_stepped:
+                                    lr_scheduler.step()
+                                
+
+
+                                #validate epoch
+                                with torch.no_grad():
+                                    infer_action.eval()
+                                    val_loss = 0
+
+                                    batch_in = []
+                                    batch_gt = []
+                                    for batch_idx, batch in enumerate(val_batches):
+                                        batch_in.append(batch[0].to(device))
+                                        batch_gt.append(batch[1].to(device))
+
+                                        if (batch_idx + 1) % batch_size == 0 or batch_idx == len(batches) - 1:
+                                            batch_in = torch.reshape(torch.cat(batch_in, dim=0),
+                                                                    (-1, 96, 96, 3))
+
+                                            batch_gt = torch.reshape(torch.cat(batch_gt, dim=0), (-1, )).to(device)
+                                            torch.cuda.empty_cache()  # clear CUDA cache
+                                            batch_out = infer_action(batch_in)
+                                            loss = loss_function(batch_out, batch_gt)
+
+                                            val_loss += loss.detach().cpu().item()
+
+                                            batch_in = []
+                                            batch_gt = []
+
+                                    
+                                    if val_loss < min_val_loss:
+                                        min_val_loss = val_loss
+                                        early_stopping_counter = 0
+                                        best_epoch = epoch 
+                                        torch.save(infer_action, trained_network_file)
+                                    else:
+                                        early_stopping_counter += 1
+
+                                
+                                # ----- record train/val loss and print progress ----- #
+                                train_val_loss_per_epoch.append([train_loss / 9, val_loss])  #as train/val split is 90/10
+                                infer_action.train()
+
+                                time_per_epoch = (time.time() - start_time) / (epoch + 1)
+                                time_left = (1.0 * time_per_epoch) * (nr_epochs - 1 - epoch)
+                                print("Epoch %5d\t[Train]\tloss: %.6f \t[Val]\tloss: %.6f \tETA: +%fs" % (
+                                    epoch + 1, float(train_loss), float(val_loss), time_left))
+
+                        print(f"Best epoch: {best_epoch + 1} with validation loss: {min_val_loss}")
+
+                                
+                        #plotting the training and validation loss and saving the figure
+                        train_losses = [x[0] for x in train_val_loss_per_epoch]
+                        val_losses = [x[1] for x in train_val_loss_per_epoch]
+                        plt.plot(range(1, nr_epochs + 1), train_losses, label='Training Loss')
+                        plt.plot(range(1, nr_epochs + 1), val_losses, label='Validation Loss')
+                        plt.xlabel('Epochs')
+                        plt.ylabel('Loss')
+                        plt.title('Training and Validation Loss over Epochs')
+                        plt.legend()
+                        plt.savefig(os.path.join(model_folder, 'loss_plot.png'))

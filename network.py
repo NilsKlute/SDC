@@ -8,7 +8,7 @@ torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 
 class ClassificationNetwork(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, dropout=0.2):
         """
         1.1 d)
         Implementation of the network layers. The image size of the input
@@ -18,7 +18,7 @@ class ClassificationNetwork(torch.nn.Module):
 
         # setting device on GPU if available, else CPU
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.dropout = 0.2
+        self.dropout = dropout
                 
 
         #96x96x3 -> 96x96x8
