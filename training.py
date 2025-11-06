@@ -52,8 +52,7 @@ def train(data_folder, trained_network_file, args):
             for batch_size in batchsize_params:
                 for dataset_prop in dataset_prop_params:
                     for gamma in gamma_params:
-                        print(f"Training with dropout={dropout}, lr={lr}, batch_size={batch_size}, dataset_size={dataset_subset_size}, gamma={gamma}")
-
+                        
                         #----- create model folder using hyperparameter values -----#
                         model_folder = f"models/hyperconfig_dataset:{dataset_size}_bs:{batch_size}_conv_n:{nr_conv_layers}_lin_n:{nr_linear_layers}_aug={data_augmentation}_drop={dropout}_epochs:{nr_epochs}_lr:{lr}_gamma:{gamma}"
                         if not os.path.exists(model_folder):
@@ -72,8 +71,10 @@ def train(data_folder, trained_network_file, args):
                         batches = all_batches[:dataset_subset_size]
                         train_split_n = int(0.9 * len(batches))
                         train_batches = batches[:train_split_n]
-                        print("Number of training samples: ", len(train_batches))
                         val_batches = batches[train_split_n:]
+                        
+                        print(f"Training with dropout={dropout}, lr={lr}, batch_size={batch_size}, dataset_size={dataset_subset_size}, gamma={gamma}")
+                        print("Number of training samples: ", len(train_batches))
                         print("Number of validation samples: ", len(val_batches))
 
                         # setting device on GPU if available, else CPU
