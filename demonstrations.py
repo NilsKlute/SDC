@@ -6,7 +6,7 @@ import pygame
 import re
 from sdc_wrapper import SDC_Wrapper
 
-def load_demonstrations(data_folder):
+def load_demonstrations(data_folder, from_one_file=False):
     """
     1.1 a)
     Given the folder containing the expert demonstrations, the data gets loaded and
@@ -19,22 +19,30 @@ def load_demonstrations(data_folder):
     actions:        python list of N numpy.ndarrays of size 3
     """
     
-    N = int((len([name for name in os.listdir(data_folder) if os.path.isfile(data_folder + "/" + name)]) - 1 )/ 2)
-    print(f"{N=}")
-    observations = []
-    actions = []
+    if not from_one_file:
+        N = int((len([name for name in os.listdir(data_folder) if os.path.isfile(data_folder + "/" + name)]) - 1 )/ 2)
+        print(f"{N=}")
+        observations = []
+        actions = []
 
-    for i in range(N):
-        observation = np.load(data_folder + f"/observation{i}.npy")
-        action      = np.load(data_folder + f"/action_{i}.npy")
+        for i in range(N):
+            observation = np.load(data_folder + f"/observation{i}.npy")
+            action      = np.load(data_folder + f"/action_{i}.npy")
 
-        observations.append(observation)
-        actions.append(action)
+            observations.append(observation)
+            actions.append(action)
 
-    np_actions = np.stack(actions)
-    print(np.unique(np_actions[:, 0]))
-    print(np.unique(np_actions[:, 1]))
-    print(np.unique(np_actions[:, 2]))
+        np_actions = np.stack(actions)
+        print(np.unique(np_actions[:, 0]))
+        print(np.unique(np_actions[:, 1]))
+        print(np.unique(np_actions[:, 2]))
+    
+    else:
+        observations = np.load(data_folder + "/observations.npy", allow_pickle=True)
+        actions = np.load(data_folder + "/actions.npy", allow_pickle=True)
+
+        observations = [observations[i] for i in range(observations.shape[0])]
+        actions = [actions[i] for i in range(actions.shape[0])]
 
     return observations, actions
 
@@ -210,7 +218,7 @@ def merge_demonstrations(data_folder):
 
 
 if __name__ == "__main__":
-    merge_demonstrations('./data')
+    merge_demonstrations('/home/stud217/Ex1/template/new_data')
     #observations, actions = load_demonstrations("/home/stud217/Ex1/template/data")
     #actions = np.stack(actions) 
     #steering_unique = np.unique(actions[:,0])

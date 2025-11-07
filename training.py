@@ -39,7 +39,8 @@ def train(data_folder, trained_network_file, args):
     #Loss function
     loss_function = nn.CrossEntropyLoss()
 
-    observations, actions = load_demonstrations(data_folder)
+    observations, actions = load_demonstrations(data_folder, from_one_file=True)
+    print("After loading demonstrations")
     observations = [torch.Tensor(observation) for observation in observations]
     actions = [torch.Tensor(action) for action in actions]
 
@@ -183,8 +184,8 @@ def train(data_folder, trained_network_file, args):
                         #plotting the training and validation loss and saving the figure
                         train_losses = [x[0] for x in train_val_loss_per_epoch]
                         val_losses = [x[1] for x in train_val_loss_per_epoch]
-                        plt.plot(range(1, len(train_losses)), train_losses, label='Training Loss')
-                        plt.plot(range(1, len(val_losses) + 1), val_losses, label='Validation Loss')
+                        plt.plot(range(1, len(train_losses) +1), train_losses, label='Training Loss')
+                        plt.plot(range(1, len(val_losses) +1), val_losses, label='Validation Loss')
                         plt.xlabel('Epochs')
                         plt.ylabel('Loss')
                         plt.title('Training and Validation Loss over Epochs')
