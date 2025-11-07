@@ -41,7 +41,7 @@ def load_demonstrations(data_folder):
     
 
 
-def save_demonstrations(data_folder, actions, observations):
+def save_demonstrations(data_folder, actions, observations, from_one_file=False):
     """
     1.1 f)
     Save the lists actions and observations in numpy .npy files that can be read
@@ -52,11 +52,32 @@ def save_demonstrations(data_folder, actions, observations):
     observations:   python list of N numpy.ndarrays of size (96, 96, 3)
     actions:        python list of N numpy.ndarrays of size 3
     """
-    m = int((len([name for name in os.listdir(data_folder) if os.path.isfile(data_folder + "/" + name)]) - 1 )/ 2)
 
-    for i, (action, observation) in enumerate(zip(actions, observations)):
-        np.save(data_folder + f"/action_{i+m}.npy", action)
-        np.save(data_folder + f"/observation{i+m}.npy", observation)
+    if not from_one_file:
+        m = int((len([name for name in os.listdir(data_folder) if os.path.isfile(data_folder + "/" + name)]) - 1 )/ 2)
+
+        for i, (action, observation) in enumerate(zip(actions, observations)):
+            np.save(data_folder + f"/action_{i+m}.npy", action)
+            np.save(data_folder + f"/observation{i+m}.npy", observation)
+    else:
+        old_actions = np.load(data_folder + "/actions.npy")
+        old_observations = np.load(data_folder + "/observations.npy")
+
+        new_actions = np.asarray(actions)
+        new_observations = np.asarray(observations)
+
+        all_actions = np.cat([old_actions, new_actions], axis=0)
+        all_observations = np.cat([old_observations, new_observations], axis=0)
+
+        np.save(data_folder + f"/actions.npy", all_actions)
+        np.save(data_folder + f"/observations.npy", all_observations)
+
+
+
+
+    
+
+
 
 
 class ControlStatus:

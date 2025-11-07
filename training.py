@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import os
 from network import ClassificationNetwork
 from demonstrations import load_demonstrations
+import numpy as np
 # The flag below controls whether to allow TF32 on matmul. This flag defaults to True.
 torch.backends.cuda.matmul.allow_tf32 = False
 # The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
@@ -26,7 +27,7 @@ gamma_params = [0.5]
 if not use_dropout:
     dropout_params = [0.0]
 
-dataset_prop_params = [1] # specify proportions to use for training here (e.g., [0.1, 0.5, 1] for 10%, 50%, and 100% of the dataset)
+dataset_prop_params = [0.5] # specify proportions to use for training here (e.g., [0.1, 0.5, 1] for 10%, 50%, and 100% of the dataset)
 
 def train(data_folder, trained_network_file, args):
     """
@@ -182,10 +183,12 @@ def train(data_folder, trained_network_file, args):
                         #plotting the training and validation loss and saving the figure
                         train_losses = [x[0] for x in train_val_loss_per_epoch]
                         val_losses = [x[1] for x in train_val_loss_per_epoch]
-                        plt.plot(range(1, best_epoch + 1), train_losses, label='Training Loss')
-                        plt.plot(range(1, best_epoch + 1), val_losses, label='Validation Loss')
+                        plt.plot(range(1, len(train_losses)), train_losses, label='Training Loss')
+                        plt.plot(range(1, len(val_losses) + 1), val_losses, label='Validation Loss')
                         plt.xlabel('Epochs')
                         plt.ylabel('Loss')
                         plt.title('Training and Validation Loss over Epochs')
                         plt.legend()
                         plt.savefig(os.path.join(model_folder, 'loss_plot.png'))
+
+                        np.save(os.path.join(model_folder, 'train_val_loss.npy'), np.array(train_val_loss_per_epoch))
