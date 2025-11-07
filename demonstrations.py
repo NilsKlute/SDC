@@ -20,7 +20,7 @@ def load_demonstrations(data_folder, from_one_file=False):
     """
     
     if not from_one_file:
-        N = int((len([name for name in os.listdir(data_folder) if os.path.isfile(data_folder + "/" + name)]) - 1 )/ 2)
+        N = int((len([name for name in os.listdir(data_folder) if os.path.isfile(data_folder + "/" + name)]) - 3 )/ 2)
         print(f"{N=}")
         observations = []
         actions = []
@@ -62,7 +62,7 @@ def save_demonstrations(data_folder, actions, observations, from_one_file=False)
     """
 
     if not from_one_file:
-        m = int((len([name for name in os.listdir(data_folder) if os.path.isfile(data_folder + "/" + name)]) - 1 )/ 2)
+        m = int((len([name for name in os.listdir(data_folder) if os.path.isfile(data_folder + "/" + name)]) - 3 )/ 2)
 
         for i, (action, observation) in enumerate(zip(actions, observations)):
             np.save(data_folder + f"/action_{i+m}.npy", action)
