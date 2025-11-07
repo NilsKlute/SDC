@@ -66,8 +66,8 @@ def save_demonstrations(data_folder, actions, observations, from_one_file=False)
         new_actions = np.asarray(actions)
         new_observations = np.asarray(observations)
 
-        all_actions = np.cat([old_actions, new_actions], axis=0)
-        all_observations = np.cat([old_observations, new_observations], axis=0)
+        all_actions = np.concatenate([old_actions, new_actions], axis=0)
+        all_observations = np.concatenate([old_observations, new_observations], axis=0)
 
         np.save(data_folder + f"/actions.npy", all_actions)
         np.save(data_folder + f"/observations.npy", all_observations)
@@ -158,7 +158,7 @@ def record_demonstrations(demonstrations_folder):
             time.sleep(0.01)
 
         if status.save:
-            save_demonstrations(demonstrations_folder, actions, observations)
+            save_demonstrations(demonstrations_folder, actions, observations, from_one_file=True)
             status.save = False
 
         status.stop = False
