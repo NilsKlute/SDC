@@ -3,7 +3,7 @@ import numpy as np
 import gymnasium as gym
 import time
 import pygame
-
+import re
 from sdc_wrapper import SDC_Wrapper
 
 def load_demonstrations(data_folder):
@@ -165,12 +165,57 @@ def record_demonstrations(demonstrations_folder):
 
     env.close()
 
+
+
+def merge_demonstrations(data_folder):
+    """
+    Merge individual action/observation files into two aggregate .npz archives.
+
+    The function expects files named action_<id>.npz (or .npy) and
+    observation<id>.npz (or .npy). All ids that exist for both an action and an
+    observation are loaded, ordered by their numeric id, stacked, and saved as
+    actions.npz and observations.npz inside data_folder.
+    """
+    action_pattern = re.compile(r"action_(\d+)\.(npy|npz)$")
+    observation_pattern = re.compile(r"observation(\d+)\.(npy|npz)$")
+
+    action_files = {}
+    observation_files = {}
+
+    for filename in os.listdir(data_folder):
+        action_match = action_pattern.fullmatch(filename)
+        if action_match:
+            action_files[int(action_match.group(1))] = os.path.join(data_folder, filename)
+            continue
+        observation_match = observation_pattern.fullmatch(filename)
+        if observation_match:
+            observation_files[int(observation_match.group(1))] = os.path.join(data_folder, filename)
+
+    paired_ids = sorted(set(action_files) & set(observation_files))
+    if not paired_ids:
+        raise ValueError(f"No matching action/observation file pairs found in {data_folder}.")
+
+    actions = []
+    observations = []
+    for idx in paired_ids:
+        actions.append(np.load(action_files[idx]))
+        observations.append(np.load(observation_files[idx]))
+
+    actions_array = np.stack(actions)
+    observations_array = np.stack(observations)
+
+    np.save(os.path.join(data_folder, 'actions.npy'), actions_array)
+    np.save(os.path.join(data_folder, 'observations.npy'), observations_array)
+
+
+
 if __name__ == "__main__":
-    observations, actions = load_demonstrations("/home/stud217/Ex1/template/data")
-    actions = np.stack(actions) 
-    steering_unique = np.unique(actions[:,0])
-    gas_unique = np.unique(actions[:,1])
-    break_unique = np.unique(actions[:,2])
-    print(steering_unique)
-    print(gas_unique)
-    print(break_unique)
+    merge_demonstrations('./data')
+    #observations, actions = load_demonstrations("/home/stud217/Ex1/template/data")
+    #actions = np.stack(actions) 
+    #steering_unique = np.unique(actions[:,0])
+    #gas_unique = np.unique(actions[:,1])
+    #break_unique = np.unique(actions[:,2])
+    #print(steering_unique)
+    #print(gas_unique)
+    #print(break_unique)
