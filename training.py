@@ -45,6 +45,45 @@ def train(data_folder, trained_network_file, args):
     observations = [torch.Tensor(observation) for observation in observations]
     actions = [torch.Tensor(action) for action in actions]
 
+    # Data augementation
+    if data_augmentation:
+        augmented_observations = []
+        augmented_actions = []
+
+        transform_hflip = torchvision.transforms.RandomHorizontalFlip(p=1.0)
+        transform_brightness = torchvision.transforms.ColorJitter(brightness=0.5)
+
+        # Increase the datasetsize by a factor of 3
+        for obs, act in zip(observations, actions):
+            # assume obs is a float tensor in [0, 255] shaped (H, W, C)
+            # 1) keep original
+            augmented_observations.append(obs)
+            augmented_actions.append(act)
+
+            # 2) horizontal flip
+            obs_chw = obs.permute(2, 0, 1)               # (C, H, W)
+            hflipped_chw = transform_hflip(obs_chw)
+            hflipped_obs = hflipped_chw.permute(1, 2, 0)  # back to (H, W, C)
+
+            hflipped_act = act.clone()
+            hflipped_act[0] = -hflipped_act[0]
+            augmented_observations.append(hflipped_obs)
+            augmented_actions.append(hflipped_act)
+
+            # 3) brightness jitter
+            # normalize to [0,1], apply jitter, then scale back
+            obs_chw_01 = obs_chw / 255.0
+            bright_chw_01 = transform_brightness(obs_chw_01)
+            bright_chw = (bright_chw_01 * 255.0).clamp(0, 255)
+            bright_obs = bright_chw.permute(1, 2, 0)
+
+            augmented_observations.append(bright_obs)
+            augmented_actions.append(act)
+
+        observations = augmented_observations
+        actions = augmented_actions
+        print(f"Data augmentation applied. New dataset size: {len(observations)}")
+
 
     # get action classes and class weights
     action_classes, class_weights = infer_action.actions_to_classes(actions)

@@ -5,6 +5,10 @@ import time
 import pygame
 import re
 from sdc_wrapper import SDC_Wrapper
+import os, re, math
+import numpy as np
+from numpy.lib.format import open_memmap
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def load_demonstrations(data_folder, from_one_file=False):
     """
@@ -174,51 +178,110 @@ def record_demonstrations(demonstrations_folder):
     env.close()
 
 
-
-def merge_demonstrations(data_folder):
+def merge_demonstrations(
+    data_folder,
+    out_actions="actions_1.npy",
+    out_observations="observations_1.npy",
+    dtype=None,
+):
     """
-    Merge individual action/observation files into two aggregate .npz archives.
-
-    The function expects files named action_<id>.npz (or .npy) and
-    observation<id>.npz (or .npy). All ids that exist for both an action and an
-    observation are loaded, ordered by their numeric id, stacked, and saved as
-    actions.npz and observations.npz inside data_folder.
+    Minimal merge for .npy files only:
+      - Finds action_<id>.npy and observation<id>.npy
+      - Keeps ids present in BOTH
+      - Loads everything into memory, stacks on axis 0, saves two .npy files
     """
-    action_pattern = re.compile(r"action_(\d+)\.(npy|npz)$")
-    observation_pattern = re.compile(r"observation(\d+)\.(npy|npz)$")
+    action_rx = re.compile(r"action_(\d+)\.npy$")
+    obs_rx    = re.compile(r"observation(\d+)\.npy$")
 
     action_files = {}
     observation_files = {}
 
-    for filename in os.listdir(data_folder):
-        action_match = action_pattern.fullmatch(filename)
-        if action_match:
-            action_files[int(action_match.group(1))] = os.path.join(data_folder, filename)
+    for name in os.listdir(data_folder):
+        path = os.path.join(data_folder, name)
+        if not os.path.isfile(path):
             continue
-        observation_match = observation_pattern.fullmatch(filename)
-        if observation_match:
-            observation_files[int(observation_match.group(1))] = os.path.join(data_folder, filename)
+        m = action_rx.fullmatch(name)
+        if m:
+            action_files[int(m.group(1))] = path
+            continue
+        m = obs_rx.fullmatch(name)
+        if m:
+            observation_files[int(m.group(1))] = path
 
-    paired_ids = sorted(set(action_files) & set(observation_files))
-    if not paired_ids:
-        raise ValueError(f"No matching action/observation file pairs found in {data_folder}.")
+    ids = sorted(set(action_files).intersection(observation_files))
+    if not ids:
+        raise ValueError(f"No matching action/observation pairs found in {data_folder}.")
 
-    actions = []
-    observations = []
-    for idx in paired_ids:
-        actions.append(np.load(action_files[idx]))
-        observations.append(np.load(observation_files[idx]))
+    # Load first pair to fix shapes/dtypes
+    first_a = np.load(action_files[ids[0]], allow_pickle=False)
+    first_o = np.load(observation_files[ids[0]], allow_pickle=False)
 
-    actions_array = np.stack(actions)
-    observations_array = np.stack(observations)
+    if dtype is not None:
+        a_dtype = np.dtype(dtype)
+        o_dtype = np.dtype(dtype)
+        first_a = first_a.astype(a_dtype, copy=False)
+        first_o = first_o.astype(o_dtype, copy=False)
+    else:
+        a_dtype = first_a.dtype
+        o_dtype = first_o.dtype
 
-    np.save(os.path.join(data_folder, 'actions.npy'), actions_array)
-    np.save(os.path.join(data_folder, 'observations.npy'), observations_array)
+    a_shape = first_a.shape
+    o_shape = first_o.shape
+
+    actions = [first_a]
+    observations = [first_o]
+
+    # Load remaining pairs
+    for i in ids[1:]:
+        if i % 1000 == 0:
+            print(f"Processing id {i}...")
+        a = np.load(action_files[i], allow_pickle=False)
+        o = np.load(observation_files[i], allow_pickle=False)
+
+        if a.shape != a_shape or o.shape != o_shape:
+            raise ValueError(
+                f"Shape mismatch at id {i}. "
+                f"Expected action {a_shape}, observation {o_shape} but got {a.shape}, {o.shape}."
+            )
+
+        if dtype is not None:
+            a = a.astype(a_dtype, copy=False)
+            o = o.astype(o_dtype, copy=False)
+
+        actions.append(a)
+        observations.append(o)
+
+    actions_arr = np.stack(actions, axis=0)
+    observations_arr = np.stack(observations, axis=0)
+
+    out_a_path = os.path.join(data_folder, out_actions)
+    out_o_path = os.path.join(data_folder, out_observations)
+    np.save(out_a_path, actions_arr)
+    np.save(out_o_path, observations_arr)
+
+    return out_a_path, out_o_path
+
+
+def merge_two_npy_files(file1, file2, output_file):
+    """
+    Merge two .npy files by loading them, concatenating their contents along
+    the first axis, and saving the result to a new .npy file.
+    """
+    data1 = np.load(file1)
+    data2 = np.load(file2)
+
+    merged_data = np.concatenate((data1, data2), axis=0)
+    np.save(output_file, merged_data)
 
 
 
 if __name__ == "__main__":
-    merge_demonstrations('/home/stud217/Ex1/template/new_data')
+    #merge_demonstrations('/media/sn/NMTISSD/Frieder/new_data2/new_data')
+    #merge_two_npy_files('/media/sn/NMTISSD/Frieder/new_data2/new_data/actions_1.npy', './data/actions.npy', './data/actions_full.npy')
+    #merge_two_npy_files('/media/sn/NMTISSD/Frieder/new_data2/new_data/observations_1.npy', './data/observations.npy', './data/observations_full.npy')
+    #merge_two_npy_files('./data/observations_1.npy', './data/observations_2.npy', './data/observations.npy')
+    actions = np.load('./data/actions_full.npy')
+    print(actions.shape)
     #observations, actions = load_demonstrations("/home/stud217/Ex1/template/data")
     #actions = np.stack(actions) 
     #steering_unique = np.unique(actions[:,0])
