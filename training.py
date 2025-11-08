@@ -27,25 +27,35 @@ gamma_params = [0.5]
 if not use_dropout:
     dropout_params = [0.0]
 
-dataset_prop_params = [0.5] # specify proportions to use for training here (e.g., [0.1, 0.5, 1] for 10%, 50%, and 100% of the dataset)
+dataset_prop_params = [1] # specify proportions to use for training here (e.g., [0.1, 0.5, 1] for 10%, 50%, and 100% of the dataset)
 
 def train(data_folder, trained_network_file, args):
     """
     Function for training the network.
     """
     # initialize auxiliary network for processing images and inferring actions
-    infer_action = ClassificationNetwork() 
+    infer_action = ClassificationNetwork()
 
-    #Loss function
-    loss_function = nn.CrossEntropyLoss()
+    # setting device on GPU if available, else CPU 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
+    # load dataset
     observations, actions = load_demonstrations(data_folder, from_one_file=True)
-    print("After loading demonstrations")
     observations = [torch.Tensor(observation) for observation in observations]
     actions = [torch.Tensor(action) for action in actions]
 
-    all_batches = [batch for batch in zip(observations,
-                                      infer_action.actions_to_classes(actions))]
+
+    # get action classes and class weights
+    action_classes, class_weights = infer_action.actions_to_classes(actions)
+    class_weights_tensor = torch.tensor(class_weights).to(device)
+
+    # define loss function with class weights
+    loss_function = nn.CrossEntropyLoss(weight=class_weights_tensor)
+
+
+    # create databatches
+    all_batches = [batch for batch in zip(observations, action_classes)]
     random.shuffle(all_batches)
     dataset_size = len(all_batches)
 
@@ -80,19 +90,20 @@ def train(data_folder, trained_network_file, args):
                         print("Number of validation samples: ", len(val_batches))
 
 
-                        #----- setting device on GPU if available, else CPU -------#
-                        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                        #----- move network to GPU if available -----#
                         infer_action.to(device)
 
 
-                        nr_epochs = args.nr_epochs
-                        start_time = time.time()
-                        train_val_loss_per_epoch = [] # to store train/val loss for each epoch
+                        
 
-                        #----- initialize early stopping parameters ------#
+                        #----- initialize early stopping parameters / loss saving ------#
                         best_epoch = 0
                         early_stopping_counter = 0
                         min_val_loss = float('inf')
+
+                        train_val_loss_per_epoch = [] # to store train/val loss for each epoch
+                        nr_epochs = args.nr_epochs
+                        start_time = time.time()
 
 
                         # ------------------ training/validation loop ------------------ #

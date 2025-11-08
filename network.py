@@ -85,48 +85,75 @@ class ClassificationNetwork(torch.nn.Module):
         return          python list of N torch.Tensors of size 1
         """
         classes = []
+        class_occurences = [0 for _ in range(9)]
         for action in actions:
-            steer = action[0].item()
-            gas = action[1].item()
-            brake = action[2].item()
+            steer = round(action[0].item(), 2)
+            gas = round(action[1].item(), 2)
+            brake = round(action[2].item(), 2)
 
             # steer left
-            if steer == -1 and gas == 0:
+            if steer == -1 and gas == 0 and brake == 0:
                 classes.append(torch.Tensor([0]).type(torch.LongTensor))
+                class_occurences[0] += 1
             
             # steer left and gas
-            if steer == -1 and gas == 0.5:
+            elif steer == -1 and gas == 0.5 and brake == 0:
                 classes.append(torch.Tensor([1]).type(torch.LongTensor))
+                class_occurences[1] += 1
 
             # steer right
-            if steer == 1 and gas == 0:
+            elif steer == 1 and gas == 0 and brake == 0:
                 classes.append(torch.Tensor([2]).type(torch.LongTensor))
+                class_occurences[2] += 1
             
             # steer right and gas
-            if steer == 1 and gas == 0.5:
+            elif steer == 1 and gas == 0.5 and brake == 0:
                 classes.append(torch.Tensor([3]).type(torch.LongTensor))
+                class_occurences[3] += 1
 
             # steer left and brake
-            if steer == -1 and brake == 0.8:
+            elif steer == -1 and gas == 0 and brake == 0.8:
                 classes.append(torch.Tensor([4]).type(torch.LongTensor))
+                class_occurences[4] += 1
 
             # steer right and brake
-            if steer == 1 and brake == 0.8:
+            elif steer == 1 and gas == 0 and brake == 0.8:
                 classes.append(torch.Tensor([5]).type(torch.LongTensor))
+                class_occurences[5] += 1
 
             # gas
-            if steer == 0 and gas == 0.5:
+            elif steer == 0 and gas == 0.5 and brake == 0:
                 classes.append(torch.Tensor([6]).type(torch.LongTensor))
+                class_occurences[6] += 1
 
             # brake
-            if steer == 0 and brake == 0.8:
+            elif steer == 0 and gas == 0 and brake == 0.8:
                 classes.append(torch.Tensor([7]).type(torch.LongTensor))
+                class_occurences[7] += 1
             
             # nothing
-            if steer == 0 and gas == 0:
+            elif steer == 0 and gas == 0 and brake == 0:
                 classes.append(torch.Tensor([8]).type(torch.LongTensor))
+                class_occurences[8] += 1
+            else:
+                print(f"Unknown action: {action}. Apppend to class 'nothing'")
+                classes.append(torch.Tensor([8]).type(torch.LongTensor))
+                class_occurences[8] += 1
 
-        return classes
+        assert len(classes) == len(actions) # sanity check
+
+        uniform_class_weight = len(actions) / 9
+        class_weights = [uniform_class_weight / occ if occ > 0 else 0 for occ in class_occurences]
+        
+        
+        class_proportions = [prop / len(actions) for prop in class_occurences]
+        class_names = ["left", "left+gas", "right", "right+gas", "left+brake", "right+brake", "gas", "brake", "nothing"]
+        class_prop_dict = {class_names[i]: prop for i, prop in enumerate(class_proportions)}
+
+        print("Class proportions:")
+        print(class_prop_dict)
+
+        return classes, class_weights
 
 
     def scores_to_action(self, scores):
