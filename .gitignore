@@ -32,6 +32,7 @@ models/
 job_outputs/
 data_sdc_538794.zip
 data_500000/
+data_backup/
 # -------------------------------
 # System / editor files
 # -------------------------------

@@ -1,245 +1,287 @@
+# train.py
+import os, time, random, contextlib
+import numpy as np
 import torch
 import torch.nn as nn
-import torchvision
-import random
-import time
+from torch.utils.data import DataLoader, random_split, Subset
+from torch.cuda.amp import autocast, GradScaler
 import matplotlib.pyplot as plt
-import os
+
 from network import ClassificationNetwork
-from demonstrations import load_demonstrations
-import numpy as np
-# The flag below controls whether to allow TF32 on matmul. This flag defaults to True.
+from data import DrivingDatasetHWC
+
+# ---- Verbosity controls ----
+VERBOSE = True
+PRINT_EVERY = 1       # print every N training batches (set 10/50 if too spammy)
+VAL_PRINT_EVERY = 10  # print every N validation batches
+
+# Keep TF32 disabled (matches your original)
 torch.backends.cuda.matmul.allow_tf32 = False
-# The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
 torch.backends.cudnn.allow_tf32 = False
 
-# SPECIFY HYPERPARAMETERS HERE   
+# HYPERPARAMETERS
 nr_conv_layers = 3
 nr_linear_layers = 2
 data_augmentation = False
 use_dropout = True
-# These cofigurations will be used for grid search
-dropout_params = [0.2]
+
+dropout_params = [0.2] if use_dropout else [0.0]
 lr_params = [1e-3]
 batchsize_params = [256]
 gamma_params = [0.5]
+dataset_prop_params = [1]
 
-if not use_dropout:
-    dropout_params = [0.0]
+def _ts():
+    return time.strftime("%H:%M:%S")
 
-dataset_prop_params = [1] # specify proportions to use for training here (e.g., [0.1, 0.5, 1] for 10%, 50%, and 100% of the dataset)
+def log(msg):
+    if VERBOSE:
+        print(f"[{_ts()}] {msg}", flush=True)
+
+@contextlib.contextmanager
+def time_block(name):
+    t0 = time.perf_counter()
+    log(f"--> {name} START")
+    try:
+        yield
+    finally:
+        dt = time.perf_counter() - t0
+        log(f"<-- {name} END ({dt:.3f}s)")
+
+def current_lr(optim):
+    return optim.param_groups[0].get("lr", None)
 
 def train(data_folder, trained_network_file, args):
-    """
-    Function for training the network.
-    """
-    # initialize auxiliary network for processing images and inferring actions
-    infer_action = ClassificationNetwork()
-
-    # setting device on GPU if available, else CPU 
+    log("Starting train()")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    log(f"Device: {device}")
+    if device.type == "cuda":
+        log(f"CUDA devices: {torch.cuda.device_count()}")
+        log(f"Current device: {torch.cuda.current_device()}")
+        log(f"Device name: {torch.cuda.get_device_name(0)}")
+    else:
+        log("CUDA not available; running on CPU")
 
+    obs_path = os.path.join(data_folder, 'observations.npy')   # (N,96,96,3)
+    act_path = os.path.join(data_folder, 'actions.npy')        # (N,A)
+    log(f"Observations path: {obs_path}")
+    log(f"Actions path: {act_path}")
 
-    # load dataset
-    observations, actions = load_demonstrations(data_folder, from_one_file=True)
-    observations = [torch.Tensor(observation) for observation in observations]
-    actions = [torch.Tensor(action) for action in actions]
+    with time_block("Load actions (memmap)"):
+        actions_np = np.load(act_path, mmap_mode="r")
+        log(f"actions_np shape={actions_np.shape}, dtype={actions_np.dtype}, writable={actions_np.flags.writeable}")
 
-    # Data augementation
-    if data_augmentation:
-        augmented_observations = []
-        augmented_actions = []
+    # Helper for class mapping (same as before)
+    helper = ClassificationNetwork()
 
-        transform_hflip = torchvision.transforms.RandomHorizontalFlip(p=1.0)
-        transform_brightness = torchvision.transforms.ColorJitter(brightness=0.5)
+    def to_class_fn(action_tensor):
+        # returns index; helper.actions_to_classes returns (classes, weights)
+        classes = helper.actions_to_classes([action_tensor])
+        c0 = classes[0]
+        return int(c0.item() if torch.is_tensor(c0) else c0)
 
-        # Increase the datasetsize by a factor of 3
-        for obs, act in zip(observations, actions):
-            # assume obs is a float tensor in [0, 255] shaped (H, W, C)
-            # 1) keep original
-            augmented_observations.append(obs)
-            augmented_actions.append(act)
+    with time_block("Create dataset (HWC, 0..255)"):
+        full_ds = DrivingDatasetHWC(
+            obs_path=obs_path,
+            actions_array=actions_np,
+            to_class_fn=to_class_fn,
+            train=True,
+            augment=data_augmentation,
+        )
+        N = len(full_ds)
+        log(f"Full dataset size N={N}")
 
-            # 2) horizontal flip
-            obs_chw = obs.permute(2, 0, 1)               # (C, H, W)
-            hflipped_chw = transform_hflip(obs_chw)
-            hflipped_obs = hflipped_chw.permute(1, 2, 0)  # back to (H, W, C)
+    with time_block("Train/Val split 90/10"):
+        split_n = int(0.9 * N)
+        gen = torch.Generator().manual_seed(42)
+        train_ds, val_ds = random_split(full_ds, [split_n, N - split_n], generator=gen)
+        val_ds.dataset.train = False
+        val_ds.dataset.augment = False
+        log(f"Train size={len(train_ds)}  Val size={len(val_ds)}  Augment(train)={data_augmentation}")
 
-            hflipped_act = act.clone()
-            hflipped_act[0] = -hflipped_act[0]
-            augmented_observations.append(hflipped_obs)
-            augmented_actions.append(hflipped_act)
-
-            # 3) brightness jitter
-            # normalize to [0,1], apply jitter, then scale back
-            obs_chw_01 = obs_chw / 255.0
-            bright_chw_01 = transform_brightness(obs_chw_01)
-            bright_chw = (bright_chw_01 * 255.0).clamp(0, 255)
-            bright_obs = bright_chw.permute(1, 2, 0)
-
-            augmented_observations.append(bright_obs)
-            augmented_actions.append(act)
-
-        observations = augmented_observations
-        actions = augmented_actions
-        print(f"Data augmentation applied. New dataset size: {len(observations)}")
-
-
-    # get action classes and class weights
-    action_classes, class_weights = infer_action.actions_to_classes(actions)
-    class_weights_tensor = torch.tensor(class_weights).to(device)
-
-    # define loss function with class weights
-    loss_function = nn.CrossEntropyLoss(weight=class_weights_tensor)
-
-
-    # create databatches
-    all_batches = [batch for batch in zip(observations, action_classes)]
-    random.shuffle(all_batches)
-    dataset_size = len(all_batches)
+    def make_loader(ds, bs, shuffle):
+        nw = min(8, os.cpu_count() or 2)
+        pin = True
+        persist = (os.cpu_count() or 0) > 1
+        log(f"DataLoader: bs={bs}, shuffle={shuffle}, num_workers={nw}, pin_memory={pin}, persistent_workers={persist}")
+        return DataLoader(
+            ds,
+            batch_size=bs,
+            shuffle=shuffle,
+            num_workers=nw,
+            pin_memory=pin,
+            persistent_workers=persist,
+        )
 
     for dropout in dropout_params:
         for lr in lr_params:
             for batch_size in batchsize_params:
                 for dataset_prop in dataset_prop_params:
                     for gamma in gamma_params:
-                        
-                        #----- create model folder using hyperparameter values -----#
-                        model_folder = f"models/hyperconfig_dataset:{dataset_size}_bs:{batch_size}_conv_n:{nr_conv_layers}_lin_n:{nr_linear_layers}_aug={data_augmentation}_drop={dropout}_epochs:{args.nr_epochs}_lr:{lr}_gamma:{gamma}"
-                        if not os.path.exists(model_folder):
-                            os.makedirs(model_folder)
-                        trained_network_file = os.path.join(model_folder, trained_network_file)
 
+                        # Subsample train by proportion
+                        sub_len = int(dataset_prop * len(train_ds))
+                        train_sub = Subset(train_ds, range(sub_len))
+                        log(f"Dataset proportion={dataset_prop} -> train_sub={sub_len}")
 
-                        #-----  initialize network for training -----#
-                        infer_action = ClassificationNetwork(dropout)
-                        optimizer = torch.optim.Adam(infer_action.parameters(), lr=lr)
-                        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=gamma)
+                        log("Making train/val loaders…")
+                        with time_block("Create DataLoaders"):
+                            train_loader = make_loader(train_sub, batch_size, shuffle=True)
+                            val_loader = make_loader(val_ds, batch_size, shuffle=False)
 
+                        # Model + optimizer
+                        log("Building model/optimizer/scheduler/scaler")
+                        model = ClassificationNetwork(dropout).to(device)
+                        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+                        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=gamma)
+                        scaler = GradScaler(enabled=True)
 
-                        #------- split training and validation data -------#
-                        dataset_subset_size = int(dataset_prop * dataset_size)
-                        batches = all_batches[:dataset_subset_size]
-                        train_split_n = int(0.9 * len(batches))
-                        train_batches = batches[:train_split_n]
-                        val_batches = batches[train_split_n:]
-                        
-                        print(f"Training with dropout={dropout}, lr={lr}, batch_size={batch_size}, dataset_size={dataset_subset_size}, gamma={gamma}")
-                        print("Number of training samples: ", len(train_batches))
-                        print("Number of validation samples: ", len(val_batches))
+                        # Loss (unweighted here, matches your code)
+                        loss_fn = nn.CrossEntropyLoss()
 
+                        # Folder setup
+                        dataset_size = len(train_sub) + len(val_ds)
+                        model_folder = (
+                            f"models/hyperconfig_dataset:{dataset_size}"
+                            f"_bs:{batch_size}_conv_n:{nr_conv_layers}"
+                            f"_lin_n:{nr_linear_layers}_aug={data_augmentation}"
+                            f"_drop={dropout}_epochs:{args.nr_epochs}_lr:{lr}_gamma:{gamma}"
+                        )
+                        os.makedirs(model_folder, exist_ok=True)
+                        save_path = os.path.join(model_folder, trained_network_file)
+                        log(f"Model folder: {model_folder}")
+                        log(f"Checkpoint path: {save_path}")
 
-                        #----- move network to GPU if available -----#
-                        infer_action.to(device)
+                        log(f"TRAIN CONFIG -> dropout={dropout}, lr={lr}, batch_size={batch_size}, "
+                            f"dataset_size={dataset_size}, gamma={gamma}")
+                        log(f"Num train samples: {len(train_sub)}  Num val samples: {len(val_ds)}")
 
-
-                        
-
-                        #----- initialize early stopping parameters / loss saving ------#
+                        best_val = float('inf')
+                        patience = 20
+                        epochs_no_improve = 0
                         best_epoch = 0
-                        early_stopping_counter = 0
-                        min_val_loss = float('inf')
+                        hist = []
+                        t_global0 = time.perf_counter()
 
-                        train_val_loss_per_epoch = [] # to store train/val loss for each epoch
-                        nr_epochs = args.nr_epochs
-                        start_time = time.time()
+                        for epoch in range(args.nr_epochs):
+                            if epochs_no_improve >= patience:
+                                log(f"Early stopping: patience reached ({patience})")
+                                break
 
+                            log(f"===== EPOCH {epoch+1}/{args.nr_epochs} START (lr={current_lr(optimizer)}) =====")
 
-                        # ------------------ training/validation loop ------------------ #
+                            # ------- Train -------
+                            model.train()
+                            train_loss_sum = 0.0
+                            train_steps = 0
+                            t_epoch0 = time.perf_counter()
 
-                        for epoch in range(nr_epochs):
-                            if early_stopping_counter < 20:
+                            with time_block(f"Train epoch {epoch+1}"):
+                                for bidx, (xb, yb) in enumerate(train_loader, start=1):
+                                    # Shapes and dtypes
+                                    if bidx % PRINT_EVERY == 1:
+                                        log(f"[Train] Batch {bidx}: xb.shape={tuple(xb.shape)}, xb.dtype={xb.dtype}, "
+                                            f"yb.shape={tuple(yb.shape)}, yb.dtype={yb.dtype}")
 
+                                    # Transfer
+                                    t0 = time.perf_counter()
+                                    xb = xb.to(device, non_blocking=True)   # (N,H,W,C) float32 0..255
+                                    yb = yb.to(device, non_blocking=True)   # (N,) long
+                                    t_transfer = time.perf_counter() - t0
 
-                                #train epoch
-                                random.shuffle(train_batches)
-                                train_loss = 0
-                                batch_in = []
-                                batch_gt = []
-                                optimizer_stepped = False
-                                for batch_idx, batch in enumerate(train_batches):
-                                    batch_in.append(batch[0].to(device))
-                                    batch_gt.append(batch[1].to(device))
+                                    optimizer.zero_grad(set_to_none=True)
 
-                                    if (batch_idx + 1) % batch_size == 0 or batch_idx == len(batches) - 1:
-                                        batch_in = torch.reshape(torch.cat(batch_in, dim=0),
-                                                                (-1, 96, 96, 3))
+                                    # Forward + loss
+                                    t0 = time.perf_counter()
+                                    with autocast():
+                                        logits = model(xb)  # model must accept HWC
+                                        loss = loss_fn(logits, yb)
+                                    t_forward = time.perf_counter() - t0
 
-                                        batch_gt = torch.reshape(torch.cat(batch_gt, dim=0), (-1, )).to(device)
-                                        batch_out = infer_action(batch_in)
-                                        loss = loss_function(batch_out, batch_gt)
+                                    # Backward + step
+                                    t0 = time.perf_counter()
+                                    scaler.scale(loss).backward()
+                                    scaler.step(optimizer)
+                                    scaler.update()
+                                    t_backward = time.perf_counter() - t0
 
-                                        optimizer.zero_grad()
-                                        loss.backward()
-                                        optimizer.step()
-                                        optimizer_stepped = True
-                                        
-                                        train_loss += loss.detach().cpu().item()
+                                    train_loss_sum += float(loss.item())
+                                    train_steps += 1
 
-                                        batch_in = []
-                                        batch_gt = []
-                                
-                                if optimizer_stepped:
-                                    lr_scheduler.step()
-                                
+                                    if bidx % PRINT_EVERY == 0:
+                                        log(f"[Train] Batch {bidx}: "
+                                            f"transfer={t_transfer*1e3:.1f}ms "
+                                            f"forward={t_forward*1e3:.1f}ms "
+                                            f"backward+step={t_backward*1e3:.1f}ms "
+                                            f"loss={float(loss.item()):.6f}")
 
+                            scheduler.step()
+                            train_loss = train_loss_sum / max(train_steps, 1)
+                            t_epoch = time.perf_counter() - t_epoch0
+                            log(f"[Train] epoch_loss={train_loss:.6f}  steps={train_steps}  epoch_time={t_epoch:.2f}s  lr->{current_lr(optimizer)}")
 
-                                #validate epoch
+                            # ------- Validate -------
+                            model.eval()
+                            val_loss_sum = 0.0
+                            val_steps = 0
+                            with time_block(f"Validate epoch {epoch+1}"):
                                 with torch.no_grad():
-                                    infer_action.eval()
-                                    val_loss = 0
+                                    for bidx, (xb, yb) in enumerate(val_loader, start=1):
+                                        if bidx % VAL_PRINT_EVERY == 1:
+                                            log(f"[Val] Batch {bidx}: xb.shape={tuple(xb.shape)}, yb.shape={tuple(yb.shape)}")
+                                        t0 = time.perf_counter()
+                                        xb = xb.to(device, non_blocking=True)
+                                        yb = yb.to(device, non_blocking=True)
+                                        with autocast():
+                                            logits = model(xb)
+                                            loss = loss_fn(logits, yb)
+                                        val_loss_sum += float(loss.item())
+                                        val_steps += 1
+                                        if bidx % VAL_PRINT_EVERY == 0:
+                                            log(f"[Val] Batch {bidx}: loss={float(loss.item()):.6f}, "
+                                                f"batch_time={(time.perf_counter()-t0)*1e3:.1f}ms")
 
-                                    batch_in = []
-                                    batch_gt = []
-                                    for batch_idx, batch in enumerate(val_batches):
-                                        batch_in.append(batch[0].to(device))
-                                        batch_gt.append(batch[1].to(device))
+                            val_loss = val_loss_sum / max(val_steps, 1)
+                            hist.append([train_loss, val_loss])
 
-                                        if (batch_idx + 1) % batch_size == 0 or batch_idx == len(batches) - 1:
-                                            batch_in = torch.reshape(torch.cat(batch_in, dim=0),
-                                                                    (-1, 96, 96, 3))
+                            elapsed = time.perf_counter() - t_global0
+                            eta = (elapsed / (epoch + 1)) * (args.nr_epochs - 1 - epoch)
+                            log(f"Epoch {epoch+1:03d} SUMMARY  train={train_loss:.6f}  val={val_loss:.6f}  "
+                                f"elapsed={elapsed:.1f}s  ETA=+{eta:.1f}s")
 
-                                            batch_gt = torch.reshape(torch.cat(batch_gt, dim=0), (-1, )).to(device)
-                                            torch.cuda.empty_cache()  # clear CUDA cache
-                                            batch_out = infer_action(batch_in)
-                                            loss = loss_function(batch_out, batch_gt)
+                            # Early stopping + save
+                            if val_loss < best_val - 1e-8:
+                                best_val = val_loss
+                                best_epoch = epoch
+                                epochs_no_improve = 0
+                                torch.save(model.state_dict(), save_path)
+                                log(f"[Checkpoint] Saved best at epoch {epoch+1}  val={best_val:.6f}")
+                            else:
+                                epochs_no_improve += 1
+                                log(f"No improvement ({epochs_no_improve}/{patience})")
 
-                                            val_loss += loss.detach().cpu().item()
+                            log(f"===== EPOCH {epoch+1}/{args.nr_epochs} END =====")
 
-                                            batch_in = []
-                                            batch_gt = []
+                        log(f"Best epoch: {best_epoch + 1} with validation loss: {best_val:.6f}")
 
-                                    
-                                    if val_loss < min_val_loss:
-                                        min_val_loss = val_loss
-                                        early_stopping_counter = 0
-                                        best_epoch = epoch 
-                                        torch.save(infer_action, trained_network_file)
-                                    else:
-                                        early_stopping_counter += 1
+                        # ---- Plot losses ----
+                        train_losses = [x[0] for x in hist]
+                        val_losses = [x[1] for x in hist]
+                        with time_block("Plot & save curves"):
+                            plt.figure()
+                            plt.plot(range(1, len(train_losses) + 1), train_losses, label='Training Loss')
+                            plt.plot(range(1, len(val_losses) + 1), val_losses, label='Validation Loss')
+                            plt.xlabel('Epochs')
+                            plt.ylabel('Loss')
+                            plt.title('Training and Validation Loss over Epochs')
+                            plt.legend()
+                            fig_path = os.path.join(model_folder, 'loss_plot.png')
+                            plt.savefig(fig_path)
+                            plt.close()
+                            log(f"Saved plot to {fig_path}")
 
-                                
-                                # ----- record train/val loss and print progress ----- #
-                                train_val_loss_per_epoch.append([train_loss / 9, val_loss])  #as train/val split is 90/10
-                                infer_action.train()
+                        npy_path = os.path.join(model_folder, 'train_val_loss.npy')
+                        np.save(npy_path, np.array(hist, dtype=np.float32))
+                        log(f"Saved losses to {npy_path}")
 
-                                time_per_epoch = (time.time() - start_time) / (epoch + 1)
-                                time_left = (1.0 * time_per_epoch) * (nr_epochs - 1 - epoch)
-                                print("Epoch %5d\t[Train]\tloss: %.6f \t[Val]\tloss: %.6f \tETA: +%fs" % (
-                                    epoch + 1, float(train_loss), float(val_loss), time_left))
-
-                        print(f"Best epoch: {best_epoch + 1} with validation loss: {min_val_loss}")
-
-                                
-                        #plotting the training and validation loss and saving the figure
-                        train_losses = [x[0] for x in train_val_loss_per_epoch]
-                        val_losses = [x[1] for x in train_val_loss_per_epoch]
-                        plt.plot(range(1, len(train_losses) +1), train_losses, label='Training Loss')
-                        plt.plot(range(1, len(val_losses) +1), val_losses, label='Validation Loss')
-                        plt.xlabel('Epochs')
-                        plt.ylabel('Loss')
-                        plt.title('Training and Validation Loss over Epochs')
-                        plt.legend()
-                        plt.savefig(os.path.join(model_folder, 'loss_plot.png'))
-
-                        np.save(os.path.join(model_folder, 'train_val_loss.npy'), np.array(train_val_loss_per_epoch))
+    log("train() finished")
