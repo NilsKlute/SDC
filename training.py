@@ -12,7 +12,7 @@ from data import DrivingDatasetHWC
 
 # ---- Verbosity controls ----
 VERBOSE = True
-PRINT_EVERY = 1       # print every N training batches (set 10/50 if too spammy)
+PRINT_EVERY = 50     # print every N training batches (set 10/50 if too spammy)
 VAL_PRINT_EVERY = 10  # print every N validation batches
 
 # Keep TF32 disabled (matches your original)
@@ -22,7 +22,7 @@ torch.backends.cudnn.allow_tf32 = False
 # HYPERPARAMETERS
 nr_conv_layers = 3
 nr_linear_layers = 2
-data_augmentation = False
+data_augmentation = True
 use_dropout = True
 
 dropout_params = [0.2] if use_dropout else [0.0]
@@ -254,7 +254,7 @@ def train(data_folder, trained_network_file, args):
                                 best_val = val_loss
                                 best_epoch = epoch
                                 epochs_no_improve = 0
-                                torch.save(model.state_dict(), save_path)
+                                torch.save(model, save_path)
                                 log(f"[Checkpoint] Saved best at epoch {epoch+1}  val={best_val:.6f}")
                             else:
                                 epochs_no_improve += 1
