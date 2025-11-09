@@ -29,6 +29,7 @@ data.zip
 new_data.zip
 test_data/
 models/
+data_backup/
 # -------------------------------
 # System / editor files
 # -------------------------------

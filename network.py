@@ -143,17 +143,17 @@ class ClassificationNetwork(torch.nn.Module):
         assert len(classes) == len(actions) # sanity check
 
         uniform_class_weight = len(actions) / 9
-        class_weights = [uniform_class_weight / occ if occ > 0 else 0 for occ in class_occurences]
+        #class_weights = [uniform_class_weight / occ if occ > 0 else 0 for occ in class_occurences]
         
         
-        class_proportions = [prop / len(actions) for prop in class_occurences]
-        class_names = ["left", "left+gas", "right", "right+gas", "left+brake", "right+brake", "gas", "brake", "nothing"]
-        class_prop_dict = {class_names[i]: prop for i, prop in enumerate(class_proportions)}
+        #class_proportions = [prop / len(actions) for prop in class_occurences]
+        #class_names = ["left", "left+gas", "right", "right+gas", "left+brake", "right+brake", "gas", "brake", "nothing"]
+        #class_prop_dict = {class_names[i]: prop for i, prop in enumerate(class_proportions)}
 
-        print("Class proportions:")
-        print(class_prop_dict)
+        #print("Class proportions:")
+        #print(class_prop_dict)
 
-        return classes, class_weights
+        return classes#, class_weights
 
 
     def scores_to_action(self, scores):
