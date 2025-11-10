@@ -18,6 +18,10 @@ def load_demonstrations(data_folder, from_one_file=False):
                     N = number of (observation, action) - pairs
     data_folder:    python string, the path to the folder containing the
                     observation_%05d.npy and action_%05d.npy files
+    from_one_file:  boolean, if True, load all actions and all observations  
+                    from a single actions.npy file
+                    If False, load each action from action_<id>.npy and each
+                    observation from observation<id>.npy
     return:
     observations:   python list of N numpy.ndarrays of size (96, 96, 3)
     actions:        python list of N numpy.ndarrays of size 3
@@ -63,6 +67,10 @@ def save_demonstrations(data_folder, actions, observations, from_one_file=False)
                     observation_%05d.npy and action_%05d.npy files
     observations:   python list of N numpy.ndarrays of size (96, 96, 3)
     actions:        python list of N numpy.ndarrays of size 3
+    from_one_file: boolean, if True, save all actions in a single actions.npy file
+                    and all observations in a single observations.npy file.
+                    If False, save each action in action_<id>.npy and each
+                    observation in observation<id>.npy
     """
 
     if not from_one_file:
@@ -273,20 +281,3 @@ def merge_two_npy_files(file1, file2, output_file):
     merged_data = np.concatenate((data1, data2), axis=0)
     np.save(output_file, merged_data)
 
-
-
-if __name__ == "__main__":
-    merge_demonstrations('/media/sn/Frieder_Data/Master_Machine_Learning/SDC/SDC/data_HQ')
-    #merge_two_npy_files('/media/sn/Frieder_Data/Master_Machine_Learning/SDC/SDC/new_data_cut_101125/actions_frieder.npy', '/media/sn/Frieder_Data/Master_Machine_Learning/SDC/SDC/new_data_cut_101125/new_data3/actions_1.npy', '/media/sn/Frieder_Data/Master_Machine_Learning/SDC/SDC/new_data_cut_101125/actions_full.npy')
-    #merge_two_npy_files('/media/sn/Frieder_Data/Master_Machine_Learning/SDC/SDC/new_data_cut_101125/observations_frieder.npy', '/media/sn/Frieder_Data/Master_Machine_Learning/SDC/SDC/new_data_cut_101125/new_data3/observations_1.npy', '/media/sn/Frieder_Data/Master_Machine_Learning/SDC/SDC/new_data_cut_101125/observations_full.npy')
-    #merge_two_npy_files('./data/observations_1.npy', './data/observations_2.npy', './data/observations.npy')
-    #actions = np.load('/media/sn/Frieder_Data/Master_Machine_Learning/SDC/SDC/new_data_cut_101125/actions_full.npy')
-    #print(actions.shape)
-    #observations, actions = load_demonstrations("/home/stud217/Ex1/template/data")
-    #actions = np.stack(actions) 
-    #steering_unique = np.unique(actions[:,0])
-    #gas_unique = np.unique(actions[:,1])
-    #break_unique = np.unique(actions[:,2])
-    #print(steering_unique)
-    #print(gas_unique)
-    #print(break_unique)

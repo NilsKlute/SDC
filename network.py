@@ -58,6 +58,7 @@ class ClassificationNetwork(torch.nn.Module):
         return         torch.Tensor of size (batch_size, C)
         """
         
+        # Change observation shape to (batch_size, 3, 96, 96)
         x = torch.torch.permute(observation, (0, 3, 1, 2))
 
         x = self.convLayer1(x)
@@ -142,18 +143,7 @@ class ClassificationNetwork(torch.nn.Module):
 
         assert len(classes) == len(actions) # sanity check
 
-        uniform_class_weight = len(actions) / 9
-        #class_weights = [uniform_class_weight / occ if occ > 0 else 0 for occ in class_occurences]
-        
-        
-        #class_proportions = [prop / len(actions) for prop in class_occurences]
-        #class_names = ["left", "left+gas", "right", "right+gas", "left+brake", "right+brake", "gas", "brake", "nothing"]
-        #class_prop_dict = {class_names[i]: prop for i, prop in enumerate(class_proportions)}
-
-        #print("Class proportions:")
-        #print(class_prop_dict)
-
-        return classes#, class_weights
+        return classes
 
 
     def scores_to_action(self, scores):
@@ -194,6 +184,7 @@ class ClassificationNetwork(torch.nn.Module):
         elif class_number == 7:
             return 0., 0., 0.8
         
+        # mapping nothing class to gas action to avoid starting problems at the beginning of an episode
         elif class_number == 8:
             return 0., speed, 0.
         else:
@@ -242,7 +233,7 @@ def state_dict_to_full_model(state_dict_path: str,
     Returns:
         The instantiated model (already loaded with weights).
     """
-    # 1) Load the file (could be OrderedDict or a dict with 'state_dict')
+    # Load the file 
     ckpt = torch.load(state_dict_path, map_location=map_location)
     if isinstance(ckpt, OrderedDict):
         state_dict = ckpt
@@ -251,14 +242,14 @@ def state_dict_to_full_model(state_dict_path: str,
     else:
         raise ValueError(f"Unrecognized checkpoint format: {type(ckpt)}")
 
-    # 2) Strip 'module.' prefix if it exists (DataParallel)
+    # Strip 'module.' prefix if it exists 
     if any(k.startswith("module.") for k in state_dict.keys()):
         state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
 
-    # 3) Recreate the SAME architecture as training
+    # Recreate the SAME architecture as training
     model = ClassificationNetwork(dropout=dropout)
 
-    # 4) Load weights
+    # Load weights
     missing, unexpected = model.load_state_dict(state_dict, strict=strict)
     if not strict:
         if missing:
@@ -266,12 +257,8 @@ def state_dict_to_full_model(state_dict_path: str,
         if unexpected:
             print(f"[load warning] Unexpected keys: {unexpected}")
 
-    # 5) Save the full nn.Module so your eval code can torch.load(...).eval()
+    # Save the full nn.Module so eval code can load
     torch.save(model, out_model_path)
 
     return model
 
-if __name__ == "__main__":
-    state_dict_to_full_model(
-        state_dict_path="models/hyperconfig_dataset:61181_bs:128_conv_n:3_lin_n:2_aug=True_drop=0.2_epochs:75_lr:0.0001_gamma:0.5/agent.pth",
-        out_model_path="agent_670k_bs128_finetuned.pth",)
