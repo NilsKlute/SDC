@@ -1,7 +1,7 @@
 import torch
 import torchvision
 import numpy as np
-
+from collections import OrderedDict
 # The flag below controls whether to allow TF32 on matmul. This flag defaults to True.
 torch.backends.cuda.matmul.allow_tf32 = False
 # The flag below controls whether to allow TF32 on cuDNN. This flag defaults to True.
@@ -136,7 +136,7 @@ class ClassificationNetwork(torch.nn.Module):
                 classes.append(torch.Tensor([8]).type(torch.LongTensor))
                 class_occurences[8] += 1
             else:
-                print(f"Unknown action: {action}. Apppend to class 'nothing'")
+                #print(f"Unknown action: {action}. Apppend to class 'nothing'")
                 classes.append(torch.Tensor([8]).type(torch.LongTensor))
                 class_occurences[8] += 1
 
@@ -169,18 +169,18 @@ class ClassificationNetwork(torch.nn.Module):
         class_number = prediction.max(dim=0, keepdim=False)[1].item()
         
     
-        
+        speed = 0.45
         if class_number == 0:
             return -1., 0., 0.
         
         elif class_number == 1:
-            return -1., 0.5, 0.
+            return -1., speed, 0.
         
         elif class_number == 2:
             return 1., 0., 0.
         
         elif class_number == 3:
-            return 1., 0.5, 0.
+            return 1., speed, 0.
         
         elif class_number == 4:
             return -1., 0., 0.8
@@ -189,13 +189,13 @@ class ClassificationNetwork(torch.nn.Module):
             return 1., 0., 0.8
         
         elif class_number == 6:
-            return 0., 0.5, 0.
+            return 0., speed, 0.
         
         elif class_number == 7:
             return 0., 0., 0.8
         
         elif class_number == 8:
-            return 0., 0., 0.
+            return 0., speed, 0.
         else:
             print(f"Unknown Class number {class_number}")
             return 0., 0., 0.
@@ -221,3 +221,57 @@ class ClassificationNetwork(torch.nn.Module):
         gyroscope = gyro_crop.sum(dim=1, keepdim=True)
 
         return speed, abs_sensors.reshape(batch_size, 4), steering, gyroscope
+    
+
+def state_dict_to_full_model(state_dict_path: str,
+                             out_model_path: str,
+                             dropout: float = 0.2,
+                             map_location: str = "cpu",
+                             strict: bool = True):
+    """
+    Load a saved state_dict/checkpoint, rebuild ClassificationNetwork, and save a full model.
+
+    Args:
+        state_dict_path: path to .pth file produced by torch.save(model.state_dict(), ...)
+                         or a checkpoint dict that contains 'state_dict'.
+        out_model_path:  where to write the full model (e.g., 'agent_full.pth').
+        dropout:         dropout to use when recreating the model (must match training).
+        map_location:    'cpu' (default) or e.g. 'cuda:0' to load tensors to a device.
+        strict:          passed to load_state_dict; set False to ignore key mismatches.
+
+    Returns:
+        The instantiated model (already loaded with weights).
+    """
+    # 1) Load the file (could be OrderedDict or a dict with 'state_dict')
+    ckpt = torch.load(state_dict_path, map_location=map_location)
+    if isinstance(ckpt, OrderedDict):
+        state_dict = ckpt
+    elif isinstance(ckpt, dict) and "state_dict" in ckpt:
+        state_dict = ckpt["state_dict"]
+    else:
+        raise ValueError(f"Unrecognized checkpoint format: {type(ckpt)}")
+
+    # 2) Strip 'module.' prefix if it exists (DataParallel)
+    if any(k.startswith("module.") for k in state_dict.keys()):
+        state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items()}
+
+    # 3) Recreate the SAME architecture as training
+    model = ClassificationNetwork(dropout=dropout)
+
+    # 4) Load weights
+    missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+    if not strict:
+        if missing:
+            print(f"[load warning] Missing keys: {missing}")
+        if unexpected:
+            print(f"[load warning] Unexpected keys: {unexpected}")
+
+    # 5) Save the full nn.Module so your eval code can torch.load(...).eval()
+    torch.save(model, out_model_path)
+
+    return model
+
+if __name__ == "__main__":
+    state_dict_to_full_model(
+        state_dict_path="models/hyperconfig_dataset:61181_bs:128_conv_n:3_lin_n:2_aug=True_drop=0.2_epochs:75_lr:0.0001_gamma:0.5/agent.pth",
+        out_model_path="agent_670k_bs128_finetuned.pth",)

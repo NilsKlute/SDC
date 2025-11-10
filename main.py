@@ -9,6 +9,7 @@ import argparse
 from training import train
 from demonstrations import record_demonstrations
 from sdc_wrapper import SDC_Wrapper
+from network import ClassificationNetwork
 
 # torch.use_deterministic_algorithms(True)
 torch.backends.cudnn.deterministic = True
@@ -23,6 +24,7 @@ def evaluate(args, trained_network_file):
     """
     # setting device on GPU if available, else CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     infer_action = torch.load(trained_network_file, map_location=device)
     infer_action.eval()
 

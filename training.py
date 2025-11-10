@@ -12,9 +12,10 @@ from data import DrivingDatasetHWC
 
 # ---- Verbosity controls ----
 VERBOSE = True
-PRINT_EVERY = 1       # print every N training batches (set 10/50 if too spammy)
+PRINT_EVERY = 50     # print every N training batches (set 10/50 if too spammy)
 VAL_PRINT_EVERY = 10  # print every N validation batches
-
+FINETUNE = True
+OLDMODELSTATEDICT = '/media/sn/Frieder_Data/Master_Machine_Learning/Self-Driving-Cars/SDC/models/hyperconfig_dataset:678868_bs:256_conv_n:4_lin_n:3_aug=True_drop=0.2_epochs:75_lr:0.001_gamma:0.5/agent.pth'
 # Keep TF32 disabled (matches your original)
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
@@ -22,12 +23,13 @@ torch.backends.cudnn.allow_tf32 = False
 # HYPERPARAMETERS
 nr_conv_layers = 3
 nr_linear_layers = 2
-data_augmentation = False
+
+data_augmentation = True
 use_dropout = True
 
 dropout_params = [0.2] if use_dropout else [0.0]
-lr_params = [1e-3]
-batchsize_params = [256]
+lr_params = [1e-4]
+batchsize_params = [128]
 gamma_params = [0.5]
 dataset_prop_params = [1]
 
@@ -135,6 +137,14 @@ def train(data_folder, trained_network_file, args):
                         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
                         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=gamma)
                         scaler = GradScaler(enabled=True)
+                        # ---- Load previous weights to fine-tune on new data (same task) ----
+                        if FINETUNE:
+                            state = torch.load(OLDMODELSTATEDICT, map_location=device)
+                            # Handle both "raw state_dict" and "checkpoint dict with 'model' key"
+                            state_dict = state["model"] if isinstance(state, dict) and "model" in state else state
+                            missing, unexpected = model.load_state_dict(state_dict, strict=True)
+                            log(f"[Pretrained] Loaded weights from {OLDMODELSTATEDICT} "
+                                f"(missing={missing}, unexpected={unexpected})")
 
                         # Loss (unweighted here, matches your code)
                         loss_fn = nn.CrossEntropyLoss()
@@ -157,7 +167,7 @@ def train(data_folder, trained_network_file, args):
                         log(f"Num train samples: {len(train_sub)}  Num val samples: {len(val_ds)}")
 
                         best_val = float('inf')
-                        patience = 20
+                        patience = 10
                         epochs_no_improve = 0
                         best_epoch = 0
                         hist = []
