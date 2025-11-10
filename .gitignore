@@ -23,7 +23,6 @@ job.*.err
 # -------------------------------
 data/
 new_data/
-agent.pth
 uniques.out
 data.zip
 new_data.zip
@@ -33,7 +32,10 @@ job_outputs/
 data_sdc_538794.zip
 data_500000/
 data_backup/
-data*/
+data/
+data_backup/
+data_full/
+data_HQ.zip
 # -------------------------------
 # System / editor files
 # -------------------------------
