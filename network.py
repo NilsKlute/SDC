@@ -169,7 +169,7 @@ class ClassificationNetwork(torch.nn.Module):
         class_number = prediction.max(dim=0, keepdim=False)[1].item()
         
     
-        speed = 0.35
+        speed = 0.45
         if class_number == 0:
             return -1., 0., 0.
         
@@ -273,5 +273,5 @@ def state_dict_to_full_model(state_dict_path: str,
 
 if __name__ == "__main__":
     state_dict_to_full_model(
-        state_dict_path="agent_dict.pth",
-        out_model_path="agent.pth",)
+        state_dict_path="models/hyperconfig_dataset:61181_bs:128_conv_n:3_lin_n:2_aug=True_drop=0.2_epochs:75_lr:0.0001_gamma:0.5/agent.pth",
+        out_model_path="agent_670k_bs128_finetuned.pth",)
